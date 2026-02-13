@@ -7,8 +7,10 @@ import { isSabnzbdSettingsUpdated, isSabnzbdSettingsValid, SabnzbdSettings } fro
 import { isWebdavSettingsUpdated, isWebdavSettingsValid, WebdavSettings } from "./webdav/webdav";
 import { isArrsSettingsUpdated, isArrsSettingsValid, ArrsSettings } from "./arrs/arrs";
 import { isMaintenanceSettingsUpdated, Maintenance } from "./maintenance/maintenance";
-import { isRepairsSettingsUpdated, RepairsSettings } from "./repairs/repairs";
+import { isRepairsSettingsUpdated, isRepairsSettingsValid, RepairsSettings } from "./repairs/repairs";
 import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
+import { Maintenance } from "./maintenance/maintenance";
+import { isRepairsSettingsUpdated, isRepairsSettingsValid, RepairsSettings } from "./repairs/repairs";
 import { useCallback, useState } from "react";
 import { useBlocker } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
@@ -44,6 +46,7 @@ const defaultConfig = {
     "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"QueueRules\":[]}",
     "repair.enable": "false",
     "db.is-startup-vacuum-enabled": "false",
+    "repair.healthcheck-concurrency": "50",
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -106,6 +109,7 @@ function Body(props: BodyProps) {
         : isSabnzbdUpdated && !isSabnzbdSettingsValid(newConfig) ? "Invalid SABnzbd settings"
         : isWebdavUpdated && !isWebdavSettingsValid(newConfig) ? "Invalid WebDAV settings"
         : isArrsUpdated && !isArrsSettingsValid(newConfig) ? "Invalid Arrs settings"
+        : isRepairsUpdated && !isRepairsSettingsValid(newConfig) ? "Invalid Repairs settings"
         : "Save";
     const saveButtonVariant = saveButtonLabel === "Save" ? "primary"
         : saveButtonLabel === "Saved ✅" ? "success"

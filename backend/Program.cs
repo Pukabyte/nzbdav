@@ -98,6 +98,7 @@ class Program
             .AddHostedService<HistoryCleanupService>()
             .AddHostedService<DavCleanupService>()
             .AddHostedService<UsenetFileToBlobstoreMigrationService>()
+            .AddHostedService<ArticleCacheCleanupService>()
             .AddScoped<DavDatabaseContext>()
             .AddScoped<DavDatabaseClient>()
             .AddScoped<DatabaseStore>()

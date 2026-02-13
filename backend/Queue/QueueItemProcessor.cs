@@ -49,7 +49,9 @@ public class QueueItemProcessor(
         catch (Exception e) when (e.GetBaseException().IsCancellationException())
         {
             Log.Information($"Processing of queue item `{queueItem.JobName}` was cancelled.");
-            dbClient.Ctx.ClearChangeTracker();
+            dbClient.Ctx.ChangeTracker.Clear();
+            Log.Information("Processing of queue item {JobName} was cancelled", queueItem.JobName);
+            dbClient.Ctx.ChangeTracker.Clear();
         }
 
         // when a retryable error is encountered
@@ -61,7 +63,9 @@ public class QueueItemProcessor(
             try
             {
                 Log.Error($"Failed to process job, `{queueItem.JobName}` -- {e.Message}");
-                dbClient.Ctx.ClearChangeTracker();
+                dbClient.Ctx.ChangeTracker.Clear();
+                Log.Error("Failed to process job {JobName}: {ErrorMessage}", queueItem.JobName, e.Message);
+                dbClient.Ctx.ChangeTracker.Clear();
                 queueItem.PauseUntil = DateTime.Now.AddMinutes(1);
                 dbClient.Ctx.QueueItems.Attach(queueItem);
                 dbClient.Ctx.Entry(queueItem).Property(x => x.PauseUntil).IsModified = true;
@@ -355,7 +359,7 @@ public class QueueItemProcessor(
         Func<Task<DavItem?>>? databaseOperations = null
     )
     {
-        dbClient.Ctx.ClearChangeTracker();
+        dbClient.Ctx.ChangeTracker.Clear();
         var mountFolder = databaseOperations != null ? await databaseOperations.Invoke().ConfigureAwait(false) : null;
         var historyItem = CreateHistoryItem(mountFolder, startTime, error);
         var historySlot = GetHistoryResponse.HistorySlot.FromHistoryItem(historyItem, mountFolder, configManager);
@@ -388,7 +392,7 @@ public class QueueItemProcessor(
         }
         catch (Exception e)
         {
-            Log.Debug($"Could not refresh monitored downloads for Arr instance: `{arrClient.Host}`. {e.Message}");
+            Log.Debug("Could not refresh monitored downloads for {ArrHost}: {ErrorMessage}", arrClient.Host, e.Message);
         }
     }
 }

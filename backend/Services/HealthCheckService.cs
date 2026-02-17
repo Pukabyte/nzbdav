@@ -80,7 +80,7 @@ public class HealthCheckService : BackgroundService
             }
             catch (Exception e)
             {
-                Log.Error(e, $"Unexpected error performing background health checks: {e.Message}");
+                Log.Error(e, "Unexpected error performing background health checks: {ErrorMessage}", e.Message);
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
             }
         }
@@ -89,7 +89,8 @@ public class HealthCheckService : BackgroundService
     public static IOrderedQueryable<DavItem> GetHealthCheckQueueItems(DavDatabaseClient dbClient)
     {
         return GetHealthCheckQueueItemsQuery(dbClient)
-            .OrderBy(x => x.NextHealthCheck)
+            .OrderBy(x => x.NextHealthCheck == null ? 1 : 0)
+            .ThenBy(x => x.NextHealthCheck)
             .ThenByDescending(x => x.ReleaseDate)
             .ThenBy(x => x.Id);
     }

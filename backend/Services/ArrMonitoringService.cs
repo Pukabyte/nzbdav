@@ -17,6 +17,12 @@ public class ArrMonitoringService : BackgroundService
 {
     private readonly ConfigManager _configManager;
 
+    // Track recently resolved items to avoid duplicate delete requests.
+    // Key: "host|recordId", Value: time resolved.
+    private readonly Dictionary<string, DateTimeOffset> _recentlyResolved = new();
+    private readonly Lock _recentlyResolvedLock = new();
+    private static readonly TimeSpan ResolvedCooldown = TimeSpan.FromMinutes(5);
+
     public ArrMonitoringService(ConfigManager configManager)
     {
         _configManager = configManager;
@@ -33,6 +39,9 @@ public class ArrMonitoringService : BackgroundService
             var arrConfig = _configManager.GetArrConfig();
             if (arrConfig.QueueRules.All(x => x.Action == ArrConfig.QueueAction.DoNothing))
                 continue;
+
+            // periodically prune expired entries from the cooldown cache
+            PruneResolvedCache();
 
             // otherwise, handle stuck queue items according to the config
             foreach (var arrClient in arrConfig.GetArrClients())
@@ -69,7 +78,35 @@ public class ArrMonitoringService : BackgroundService
             .Max();
 
         if (action is ArrConfig.QueueAction.DoNothing) return;
+
+        // skip items that were already resolved recently
+        var cacheKey = $"{client.Host}|{item.Id}";
+        lock (_recentlyResolvedLock)
+        {
+            if (_recentlyResolved.TryGetValue(cacheKey, out var resolvedAt)
+                && DateTimeOffset.UtcNow - resolvedAt < ResolvedCooldown)
+                return;
+        }
+
         await client.DeleteQueueRecord(item.Id, action).ConfigureAwait(false);
         Log.Warning("Resolved stuck queue item {Title} from {ArrHost} with action {Action}", item.Title, client.Host, action);
+
+        lock (_recentlyResolvedLock)
+        {
+            _recentlyResolved[cacheKey] = DateTimeOffset.UtcNow;
+        }
+    }
+
+    private void PruneResolvedCache()
+    {
+        lock (_recentlyResolvedLock)
+        {
+            var expiredKeys = _recentlyResolved
+                .Where(kvp => DateTimeOffset.UtcNow - kvp.Value >= ResolvedCooldown)
+                .Select(kvp => kvp.Key)
+                .ToList();
+            foreach (var key in expiredKeys)
+                _recentlyResolved.Remove(key);
+        }
     }
 }

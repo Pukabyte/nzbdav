@@ -217,13 +217,18 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             }));
             return;
         }
-
-        Ctx.HistoryItems.RemoveRange(ids.Select(id => new HistoryItem() { Id = id }));
-        Ctx.HistoryCleanupItems.AddRange(ids.Select(x => new HistoryCleanupItem
+        var existingItems = await Ctx.HistoryItems
+            .Where(h => ids.Contains(h.Id))
+            .ToListAsync(ct).ConfigureAwait(false);
+        if (existingItems.Count > 0)
         {
-            Id = x,
-            DeleteMountedFiles = deleteFiles
-        }));
+            Ctx.HistoryItems.RemoveRange(existingItems);
+            Ctx.HistoryCleanupItems.AddRange(existingItems.Select(x => new HistoryCleanupItem
+            {
+                Id = x.Id,
+                DeleteMountedFiles = deleteFiles
+            }));
+        }
     }
 
     private class FileSizeResult

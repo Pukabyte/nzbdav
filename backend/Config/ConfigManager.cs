@@ -204,7 +204,7 @@ public class ConfigManager
 
     public bool IsIgnoreSabHistoryLimitEnabled()
     {
-        var defaultValue = true;
+        var defaultValue = false;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("api.ignore-history-limit"));
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }

@@ -43,7 +43,7 @@ jobs:
             | sed -E 's#(^-+|-+$)##g')
           echo "DOCKER_TAG: $DOCKER_TAG"
           echo "NZBDAV_VERSION=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          GHCR_REPO="ghcr.io/${{ github.repository }}"
+          GHCR_REPO="ghcr.io/${GITHUB_REPOSITORY,,}"
           echo "TAGS=${GHCR_REPO}:${DOCKER_TAG}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image (amd64 + arm64)

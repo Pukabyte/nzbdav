@@ -140,13 +140,13 @@ public class DatabaseStoreCollection(
                     davItem, dbClient, configManager),
             DavItem.ItemSubType.NzbFile =>
                 new DatabaseStoreNzbFile(
-                    davItem, httpContext, dbClient, usenetClient, configManager),
+                    davItem, httpContext, dbClient, usenetClient, configManager, activeStreamTracker),
             DavItem.ItemSubType.RarFile =>
                 new DatabaseStoreRarFile(
-                    davItem, httpContext, dbClient, usenetClient, configManager),
+                    davItem, httpContext, dbClient, usenetClient, configManager, activeStreamTracker),
             DavItem.ItemSubType.MultipartFile =>
                 new DatabaseStoreMultipartFile(
-                    davItem, httpContext, dbClient, usenetClient, configManager),
+                    davItem, httpContext, dbClient, usenetClient, configManager, activeStreamTracker),
             _ => throw new ArgumentException("Unrecognized directory child type.")
         };
     }

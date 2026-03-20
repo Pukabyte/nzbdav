@@ -319,7 +319,8 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
     /// </summary>
     internal ArticleCacheDb CacheDb => _db;
     internal PackFileManager PackManager => _packManager;
-n    /// <summary>
+
+    /// <summary>
     /// Update in-memory cache entry location after compaction.
     /// </summary>
     internal void UpdateEntryLocation(string hash, string newPackId, long newOffset)

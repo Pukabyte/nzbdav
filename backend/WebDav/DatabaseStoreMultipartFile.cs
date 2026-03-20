@@ -14,7 +14,8 @@ public class DatabaseStoreMultipartFile(
     HttpContext httpContext,
     DavDatabaseClient dbClient,
     UsenetStreamingClient usenetClient,
-    ConfigManager configManager
+    ConfigManager configManager,
+    ActiveStreamTracker activeStreamTracker
 ) : BaseStoreStreamFile(httpContext)
 {
     public DavItem DavItem => davMultipartFile;
@@ -22,27 +23,34 @@ public class DatabaseStoreMultipartFile(
     public override string UniqueKey => davMultipartFile.Id.ToString();
     public override long FileSize => davMultipartFile.FileSize!.Value;
     public override DateTime CreatedAt => davMultipartFile.CreatedAt;
-    public override Guid? NzbBlobId => davMultipartFile.NzbBlobId;
 
     protected override async Task<Stream> GetStreamAsync(CancellationToken ct)
     {
         // store the DavItem being accessed in the http context
         httpContext.Items["DavItem"] = davMultipartFile;
 
-        var id = davMultipartFile.Id;
-        var multipartFile = await dbClient.GetDavMultipartFileAsync(davMultipartFile, ct).ConfigureAwait(false);
-        if (multipartFile is null) throw new FileNotFoundException($"Could not find nzb file with id: {id}");
-        return GetStream(multipartFile);
-    }
+        // register active stream and deregister when the response completes
+        var streamInfo = activeStreamTracker.Register(davMultipartFile.Name);
+        httpContext.Items["ActiveStreamInfo"] = streamInfo;
+        if (streamInfo != null)
+        {
+            httpContext.Response.OnCompleted(() =>
+            {
+                activeStreamTracker.Deregister(streamInfo.Id);
+                return Task.CompletedTask;
+            });
+        }
 
-    private Stream GetStream(DavMultipartFile multipartFile)
-    {
+        // return the stream
+        var id = davMultipartFile.Id;
+        var multipartFile = await dbClient.Ctx.MultipartFiles.Where(x => x.Id == id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        if (multipartFile is null) throw new FileNotFoundException($"Could not find nzb file with id: {id}");
         var packedStream = new DavMultipartFileStream(
             multipartFile.Metadata.FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize()
+            configManager.GetArticleBufferSize(),
+            streamInfo
         );
-
         return multipartFile.Metadata.AesParams != null
             ? new AesDecoderStream(packedStream, multipartFile.Metadata.AesParams)
             : packedStream;

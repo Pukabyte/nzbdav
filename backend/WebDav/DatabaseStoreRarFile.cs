@@ -14,7 +14,8 @@ public class DatabaseStoreRarFile(
     HttpContext httpContext,
     DavDatabaseClient dbClient,
     UsenetStreamingClient usenetClient,
-    ConfigManager configManager
+    ConfigManager configManager,
+    ActiveStreamTracker activeStreamTracker
 ) : BaseStoreStreamFile(httpContext)
 {
     public DavItem DavItem => davRarFile;
@@ -22,26 +23,34 @@ public class DatabaseStoreRarFile(
     public override string UniqueKey => davRarFile.Id.ToString();
     public override long FileSize => davRarFile.FileSize!.Value;
     public override DateTime CreatedAt => davRarFile.CreatedAt;
-    public override Guid? NzbBlobId => davRarFile.NzbBlobId;
 
     protected override async Task<Stream> GetStreamAsync(CancellationToken ct)
     {
         // store the DavItem being accessed in the http context
         httpContext.Items["DavItem"] = davRarFile;
 
-        var id = davRarFile.Id;
-        var rarFile = await dbClient.GetDavRarFileAsync(davRarFile, ct).ConfigureAwait(false);
-        if (rarFile is null) throw new FileNotFoundException($"Could not find nzb file with id: {id}");
-        return GetStream(rarFile);
-    }
+        // register active stream and deregister when the response completes
+        var streamInfo = activeStreamTracker.Register(davRarFile.Name);
+        httpContext.Items["ActiveStreamInfo"] = streamInfo;
+        if (streamInfo != null)
+        {
+            httpContext.Response.OnCompleted(() =>
+            {
+                activeStreamTracker.Deregister(streamInfo.Id);
+                return Task.CompletedTask;
+            });
+        }
 
-    private DavMultipartFileStream GetStream(DavRarFile rarFile)
-    {
+        // return the stream
+        var id = davRarFile.Id;
+        var rarFile = await dbClient.Ctx.RarFiles.Where(x => x.Id == id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        if (rarFile is null) throw new FileNotFoundException($"Could not find nzb file with id: {id}");
         return new DavMultipartFileStream
         (
             rarFile.ToDavMultipartFileMeta().FileParts,
             usenetClient,
-            configManager.GetArticleBufferSize()
+            configManager.GetArticleBufferSize(),
+            streamInfo
         );
     }
 }

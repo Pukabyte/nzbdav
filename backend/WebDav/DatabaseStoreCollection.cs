@@ -131,7 +131,7 @@ public class DatabaseStoreCollection(
                     davItem.Name, "", httpContext, dbClient, usenetClient, configManager, activeStreamTracker),
             DavItem.ItemSubType.NzbsRoot =>
                 new DatabaseStoreWatchFolder(
-                    davItem, httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager, activeStreamTracker),
+                    davItem, httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager),
             DavItem.ItemSubType.Directory or DavItem.ItemSubType.ContentRoot  =>
                 new DatabaseStoreCollection(
                     davItem, httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager, activeStreamTracker),

@@ -49,6 +49,10 @@ const defaultConfig = {
     "repair.enable": "false",
     "db.is-startup-vacuum-enabled": "false",
     "repair.healthcheck-concurrency": "50",
+    "maintenance.remove-orphaned-schedule-enabled": "false",
+    "maintenance.remove-orphaned-schedule-time": "0",
+    "api.nzb-backup-enabled": "false",
+    "api.nzb-backup-location": "",
 }
 
 export async function loader({ request }: Route.LoaderArgs) {

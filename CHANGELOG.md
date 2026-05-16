@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.6.4](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.3...v0.6.4) (2026-04-08)
+
+
+### Bug Fixes
+
+* **deps:** bump @types/node from 25.4.0 to 25.5.0 in /frontend ([#381](https://github.com/nzbdav-dev/nzbdav/issues/381)) ([680e80d](https://github.com/nzbdav-dev/nzbdav/commit/680e80df44d4a86a6c896e25c54762159fd69741))
+* **deps:** bump isbot from 5.1.36 to 5.1.37 in /frontend ([#379](https://github.com/nzbdav-dev/nzbdav/issues/379)) ([b054f42](https://github.com/nzbdav-dev/nzbdav/commit/b054f42a8e2b715f94995b5e37763f8c0d9651f7))
+* **deps:** Bump the dotnet group with 3 updates ([#395](https://github.com/nzbdav-dev/nzbdav/issues/395)) ([aae1e43](https://github.com/nzbdav-dev/nzbdav/commit/aae1e4367bb70f7a0a517779f453680c1e06c2bb))
+* **deps:** bump the react group in /frontend with 2 updates ([#394](https://github.com/nzbdav-dev/nzbdav/issues/394)) ([5ce46bc](https://github.com/nzbdav-dev/nzbdav/commit/5ce46bc74b0cf671a91987f92aca96c5830d4615))
+* **deps:** bump the react-router group in /frontend with 5 updates ([#372](https://github.com/nzbdav-dev/nzbdav/issues/372)) ([27d4cea](https://github.com/nzbdav-dev/nzbdav/commit/27d4cea5790d92bc6f965e3dfdb3c50f9dad207a))
+* **deps:** bump the tailwindcss group in /frontend with 2 updates ([#374](https://github.com/nzbdav-dev/nzbdav/issues/374)) ([2f1c0f8](https://github.com/nzbdav-dev/nzbdav/commit/2f1c0f8bf480d7d49dfdadcafba47e7e6f7ce948))
+* **deps:** bump vite from 7.3.1 to 8.0.3 in /frontend in the vite group ([#375](https://github.com/nzbdav-dev/nzbdav/issues/375)) ([2efc0c2](https://github.com/nzbdav-dev/nzbdav/commit/2efc0c24ae2672afe5644a0186dbc1ebad710419))
+* **deps:** bump ws from 8.19.0 to 8.20.0 in /frontend ([#380](https://github.com/nzbdav-dev/nzbdav/issues/380)) ([cb42d73](https://github.com/nzbdav-dev/nzbdav/commit/cb42d73124d528b57addc70d542f562ca16d8496))
+
+## [0.6.3](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.2...v0.6.3) (2026-04-08)
+
+
+### Features
+
+* add NZB backup settings to frontend. ([55260d4](https://github.com/nzbdav-dev/nzbdav/commit/55260d41d00722b3881b4eeea5d5d07e86d5704b))
+* allow exporting nzb from history table. ([7928d4b](https://github.com/nzbdav-dev/nzbdav/commit/7928d4b1fb5fc785828b4a7b211d5c62b37b6243))
+* backup incoming nzbs to configured directory when enabled. ([c2b3692](https://github.com/nzbdav-dev/nzbdav/commit/c2b369229ae7ebd0bd3bfaa14c99f939d93c241e))
+* index QueueItems table by category and filename. ([9116bfc](https://github.com/nzbdav-dev/nzbdav/commit/9116bfc93407dc867206f16f644f7201591ff0e1))
+* organize /nzbs webdav dir by category. ([404d418](https://github.com/nzbdav-dev/nzbdav/commit/404d418a8a0a9d1465c1115b87a8506a5b9d56de))
+
+
+### Bug Fixes
+
+* remove 'Delete mounted files' option when clearing a failed history item. ([dfbc411](https://github.com/nzbdav-dev/nzbdav/commit/dfbc41148a0877cecba45bd01c97602222d1dac1))
+* updated opacity for disabled history actions. ([0b82f48](https://github.com/nzbdav-dev/nzbdav/commit/0b82f482465d0c7a81c3dca7889b57a9e0d060b2))
+* updated padding on queue/history tables. ([2e83dc7](https://github.com/nzbdav-dev/nzbdav/commit/2e83dc74e75a27b3cba1aa5b82f5da5a0b1a8217))
+* webdav range requests past content boundary return 500 instead 416 ([#384](https://github.com/nzbdav-dev/nzbdav/issues/384)) ([a43d5d7](https://github.com/nzbdav-dev/nzbdav/commit/a43d5d7e3d2de1201800dab1a38ad67b1e9d001e))
+
+## [0.6.2](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.1...v0.6.2) (2026-03-24)
+
+
+### Bug Fixes
+
+* compatability issues with NZBDonkey ([#316](https://github.com/nzbdav-dev/nzbdav/issues/316)) ([b2d0f2a](https://github.com/nzbdav-dev/nzbdav/commit/b2d0f2a4c6b48cca688bdffb91ba1b71a3fb1b84))
+* downgrade unreachable Arr instance log level from Error to Debug ([#352](https://github.com/nzbdav-dev/nzbdav/issues/352)) ([90a03bf](https://github.com/nzbdav-dev/nzbdav/commit/90a03bf3e63a871b75d25ab109a6fcdd4689ffae))
+* ensure `audio/flac` content-type mapping for flac files. ([5253fe3](https://github.com/nzbdav-dev/nzbdav/commit/5253fe3f03cbc2889928c338b2096acc7b863a52))
+* fail queue items with missing nzb blobs instead of blocking queue ([#351](https://github.com/nzbdav-dev/nzbdav/issues/351)) ([a146d07](https://github.com/nzbdav-dev/nzbdav/commit/a146d07d8c62891993796b28ad358e41385dd02d))
+* funnel frontend auth through middleware. ([eb71ebf](https://github.com/nzbdav-dev/nzbdav/commit/eb71ebf8432fc78446de1e37e4d9c5c3e81112be))
+* improve error message for malformed nzbs. ([325252e](https://github.com/nzbdav-dev/nzbdav/commit/325252e65f910f36d0e52810ccb2fba0d1a50019))
+* typo when disposing queue nzb stream. ([3e44aae](https://github.com/nzbdav-dev/nzbdav/commit/3e44aaebd635f6dcd9949f1d6dcd80d61985cbb0))
+* update changelog link on ui leftnav-menu. ([14cd09d](https://github.com/nzbdav-dev/nzbdav/commit/14cd09d2a5f88438b79b46cc6b9c1200fedf0c16))
+
 ## [0.6.1](https://github.com/nzbdav-dev/nzbdav/compare/v0.6.0...v0.6.1) (2026-03-11)
 
 

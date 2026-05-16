@@ -78,6 +78,11 @@ public class HealthCheckService : BackgroundService
                 // perform the health check
                 await PerformHealthCheck(davItem, dbClient, concurrency, cts.Token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
+            {
+                // OperationCanceledException is expected on sigterm
+                return;
+            }
             catch (Exception e)
             {
                 Log.Error(e, "Unexpected error performing background health checks: {ErrorMessage}", e.Message);
@@ -98,9 +103,8 @@ public class HealthCheckService : BackgroundService
     public static IQueryable<DavItem> GetHealthCheckQueueItemsQuery(DavDatabaseClient dbClient)
     {
         return dbClient.Ctx.Items
-            .Where(x => x.Type == DavItem.ItemType.NzbFile
-                        || x.Type == DavItem.ItemType.RarFile
-                        || x.Type == DavItem.ItemType.MultipartFile);
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile)
+            .Where(x => x.HistoryItemId == null);
     }
 
     private async Task PerformHealthCheck
@@ -211,25 +215,21 @@ public class HealthCheckService : BackgroundService
 
     private async Task<List<string>> GetAllSegments(DavItem davItem, DavDatabaseClient dbClient, CancellationToken ct)
     {
-        if (davItem.Type == DavItem.ItemType.NzbFile)
+        if (davItem.SubType == DavItem.ItemSubType.NzbFile)
         {
-            var nzbFile = await dbClient.GetNzbFileAsync(davItem.Id, ct).ConfigureAwait(false);
+            var nzbFile = await dbClient.GetDavNzbFileAsync(davItem, ct).ConfigureAwait(false);
             return nzbFile?.SegmentIds?.ToList() ?? [];
         }
 
-        if (davItem.Type == DavItem.ItemType.RarFile)
+        if (davItem.SubType == DavItem.ItemSubType.RarFile)
         {
-            var rarFile = await dbClient.Ctx.RarFiles
-                .Where(x => x.Id == davItem.Id)
-                .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+            var rarFile = await dbClient.GetDavRarFileAsync(davItem, ct).ConfigureAwait(false);
             return rarFile?.RarParts?.SelectMany(x => x.SegmentIds)?.ToList() ?? [];
         }
 
-        if (davItem.Type == DavItem.ItemType.MultipartFile)
+        if (davItem.SubType == DavItem.ItemSubType.MultipartFile)
         {
-            var multipartFile = await dbClient.Ctx.MultipartFiles
-                .Where(x => x.Id == davItem.Id)
-                .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+            var multipartFile = await dbClient.GetDavMultipartFileAsync(davItem, ct).ConfigureAwait(false);
             return multipartFile?.Metadata?.FileParts?.SelectMany(x => x.SegmentIds)?.ToList() ?? [];
         }
 

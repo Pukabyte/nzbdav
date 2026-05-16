@@ -6,8 +6,9 @@ import { isUsenetSettingsUpdated, UsenetSettings } from "./usenet/usenet";
 import { isSabnzbdSettingsUpdated, isSabnzbdSettingsValid, SabnzbdSettings } from "./sabnzbd/sabnzbd";
 import { isWebdavSettingsUpdated, isWebdavSettingsValid, WebdavSettings } from "./webdav/webdav";
 import { isArrsSettingsUpdated, isArrsSettingsValid, ArrsSettings } from "./arrs/arrs";
-import { Maintenance } from "./maintenance/maintenance";
+import { isMaintenanceSettingsUpdated, Maintenance } from "./maintenance/maintenance";
 import { isRepairsSettingsUpdated, isRepairsSettingsValid, RepairsSettings } from "./repairs/repairs";
+import { isRcloneSettingsUpdated, RcloneSettings } from "./rclone/rclone";
 import { useCallback, useState } from "react";
 import { useBlocker } from "react-router";
 import { ConfirmModal } from "~/components/confirm-modal/confirm-modal";
@@ -38,10 +39,15 @@ const defaultConfig = {
     "webdav.enforce-readonly": "true",
     "webdav.active-stream-tracker": "true",
     "webdav.preview-par2-files": "false",
+    "rclone.rc-enabled": "false",
+    "rclone.host": "",
+    "rclone.user": "",
+    "rclone.pass": "",
     "rclone.mount-dir": "",
     "media.library-dir": "",
     "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"QueueRules\":[]}",
     "repair.enable": "false",
+    "db.is-startup-vacuum-enabled": "false",
     "repair.healthcheck-concurrency": "50",
 }
 
@@ -86,7 +92,9 @@ function Body(props: BodyProps) {
     const isWebdavUpdated = isWebdavSettingsUpdated(config, newConfig);
     const isArrsUpdated = isArrsSettingsUpdated(config, newConfig);
     const isRepairsUpdated = isRepairsSettingsUpdated(config, newConfig);
-    const isUpdated = iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isRepairsUpdated;
+    const isRcloneUpdated = isRcloneSettingsUpdated(config, newConfig);
+    const isMaintenanceUpdated = isMaintenanceSettingsUpdated(config, newConfig);
+    const isUpdated = iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isRepairsUpdated || isRcloneUpdated || isMaintenanceUpdated;
     const navigationBlocker = useNavigationBlocker(isUpdated);
 
     const usenetTitle = iseUsenetUpdated ? "✏️ Usenet" : "Usenet";
@@ -94,6 +102,8 @@ function Body(props: BodyProps) {
     const webdavTitle = isWebdavUpdated ? "✏️ WebDAV" : "WebDAV";
     const arrsTitle = isArrsUpdated ? "✏️ Radarr/Sonarr" : "Radarr/Sonarr";
     const repairsTitle = isRepairsUpdated ? "✏️ Repairs" : "Repairs";
+    const rcloneTitle = isRcloneUpdated ? "✏️ Rclone Server" : "Rclone Server";
+    const maintenanceTitle = isMaintenanceUpdated ? "✏️ Maintenance" : "Maintenance";
 
     const saveButtonLabel = isSaving ? "Saving..."
         : !isUpdated && isSaved ? "Saved ✅"
@@ -155,8 +165,11 @@ function Body(props: BodyProps) {
                 <Tab eventKey="repairs" title={repairsTitle}>
                     <RepairsSettings config={newConfig} setNewConfig={setNewConfig} />
                 </Tab>
-                <Tab eventKey="maintenance" title="Maintenance">
-                    <Maintenance savedConfig={config} />
+                <Tab eventKey="rclone" title={rcloneTitle}>
+                    <RcloneSettings config={newConfig} setNewConfig={setNewConfig} />
+                </Tab>
+                <Tab eventKey="maintenance" title={maintenanceTitle}>
+                    <Maintenance savedConfig={config} config={newConfig} setNewConfig={setNewConfig} />
                 </Tab>
             </Tabs>
             <hr />

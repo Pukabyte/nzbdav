@@ -63,6 +63,16 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("ConfigItems", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.DavCleanupItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("DavCleanupItems", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -71,8 +81,14 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("FileBlobId")
+                        .HasColumnType("TEXT");
+
                     b.Property<long?>("FileSize")
                         .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("HistoryItemId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("IdPrefix")
                         .IsRequired()
@@ -89,6 +105,9 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<long?>("NextHealthCheck")
                         .HasColumnType("INTEGER");
 
+                    b.Property<Guid?>("NzbBlobId")
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid?>("ParentId")
                         .HasColumnType("TEXT");
 
@@ -99,17 +118,26 @@ namespace NzbWebDAV.Database.Migrations
                     b.Property<long?>("ReleaseDate")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("SubType")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Type")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("NzbBlobId");
 
                     b.HasIndex("IdPrefix", "Type");
 
                     b.HasIndex("ParentId", "Name")
                         .IsUnique();
 
-                    b.HasIndex("Type", "NextHealthCheck", "ReleaseDate", "Id");
+                    b.HasIndex("HistoryItemId", "SubType", "CreatedAt");
+
+                    b.HasIndex("HistoryItemId", "Type", "CreatedAt");
+
+                    b.HasIndex("Type", "HistoryItemId", "NextHealthCheck", "ReleaseDate", "Id");
 
                     b.ToTable("DavItems", (string)null);
                 });
@@ -214,6 +242,19 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("HealthCheckStats", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.HistoryCleanupItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("DeleteMountedFiles")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("HistoryCleanupItems", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.HistoryItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -246,6 +287,9 @@ namespace NzbWebDAV.Database.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("NzbBlobId")
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("TotalSegmentBytes")
                         .HasColumnType("INTEGER");
 
@@ -255,11 +299,37 @@ namespace NzbWebDAV.Database.Migrations
 
                     b.HasIndex("CreatedAt");
 
+                    b.HasIndex("NzbBlobId");
+
                     b.HasIndex("Category", "CreatedAt");
 
                     b.HasIndex("Category", "DownloadDirId");
 
                     b.ToTable("HistoryItems", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.NzbBlobCleanupItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("NzbBlobCleanupItems", (string)null);
+                });
+
+            modelBuilder.Entity("NzbWebDAV.Database.Models.NzbName", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("NzbNames", (string)null);
                 });
 
             modelBuilder.Entity("NzbWebDAV.Database.Models.QueueItem", b =>
@@ -329,16 +399,6 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("QueueNzbContents", (string)null);
                 });
 
-            modelBuilder.Entity("NzbWebDAV.Database.Models.DavItem", b =>
-                {
-                    b.HasOne("NzbWebDAV.Database.Models.DavItem", "Parent")
-                        .WithMany("Children")
-                        .HasForeignKey("ParentId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
-                    b.Navigation("Parent");
-                });
-
             modelBuilder.Entity("NzbWebDAV.Database.Models.DavMultipartFile", b =>
                 {
                     b.HasOne("NzbWebDAV.Database.Models.DavItem", "DavItem")
@@ -381,11 +441,6 @@ namespace NzbWebDAV.Database.Migrations
                         .IsRequired();
 
                     b.Navigation("QueueItem");
-                });
-
-            modelBuilder.Entity("NzbWebDAV.Database.Models.DavItem", b =>
-                {
-                    b.Navigation("Children");
                 });
 #pragma warning restore 612, 618
         }

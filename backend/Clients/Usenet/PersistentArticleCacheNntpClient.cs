@@ -320,6 +320,18 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
     internal ArticleCacheDb CacheDb => _db;
     internal PackFileManager PackManager => _packManager;
 
+    /// <summary>
+    /// Update in-memory cache entry location after compaction.
+    /// </summary>
+    internal void UpdateEntryLocation(string hash, string newPackId, long newOffset)
+    {
+        if (_cachedSegments.TryGetValue(hash, out var existing))
+        {
+            var updated = existing with { PackId = newPackId, Offset = newOffset };
+            _cachedSegments.TryUpdate(hash, updated, existing);
+        }
+    }
+
     private UsenetDecodedBodyResponse ReadCachedBody(string segmentId, ArticleCacheDb.CacheEntry entry)
     {
         var dataStream = _packManager.Read(entry.PackId, entry.Offset, entry.Length);

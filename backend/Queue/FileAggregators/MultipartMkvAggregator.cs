@@ -4,8 +4,7 @@ using NzbWebDAV.Queue.FileProcessors;
 
 namespace NzbWebDAV.Queue.FileAggregators;
 
-public class MultipartMkvAggregator
-(
+public class MultipartMkvAggregator(
     DavDatabaseClient dbClient,
     DavItem mountDirectory,
     bool checkedFullHealth
@@ -31,27 +30,31 @@ public class MultipartMkvAggregator
             var parentDirectory = MountDirectory;
             var name = multipartMkvFile.Filename;
 
-            var davItem = DavItem.New(
-                id: Guid.NewGuid(),
-                parent: parentDirectory,
-                name: name,
-                fileSize: fileParts.Sum(x => x.FilePartByteRange.Count),
-                type: DavItem.ItemType.MultipartFile,
-                releaseDate: multipartMkvFile.ReleaseDate,
-                lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null
-            );
-
             var davMultipartFile = new DavMultipartFile()
             {
-                Id = davItem.Id,
+                Id = Guid.NewGuid(),
                 Metadata = new DavMultipartFile.Meta()
                 {
                     FileParts = fileParts.ToArray()
                 }
             };
 
+            var davItem = DavItem.New(
+                id: Guid.NewGuid(),
+                parent: parentDirectory,
+                name: name,
+                fileSize: fileParts.Sum(x => x.FilePartByteRange.Count),
+                type: DavItem.ItemType.UsenetFile,
+                subType: DavItem.ItemSubType.MultipartFile,
+                releaseDate: multipartMkvFile.ReleaseDate,
+                lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null,
+                historyItemId: MountDirectory.HistoryItemId,
+                fileBlobId: davMultipartFile.Id,
+                nzbBlobId: MountDirectory.HistoryItemId
+            );
+
             dbClient.Ctx.Items.Add(davItem);
-            dbClient.Ctx.MultipartFiles.Add(davMultipartFile);
+            dbClient.Ctx.BlobMultipartFiles.Add(davMultipartFile);
         }
     }
 }

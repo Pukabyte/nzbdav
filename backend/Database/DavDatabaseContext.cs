@@ -1,9 +1,13 @@
 ﻿using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Database.Interceptors;
+using NzbWebDAV.Database.MigrationHelpers;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Utils;
+using NzbWebDAV.WebDav;
 
 namespace NzbWebDAV.Database;
 
@@ -12,10 +16,11 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
     public static string ConfigPath => EnvironmentUtil.GetEnvironmentVariable("CONFIG_PATH") ?? "/config";
     public static string DatabaseFilePath => Path.Join(ConfigPath, "db.sqlite");
 
-    private static readonly Lazy<DbContextOptions<DavDatabaseContext>> Options = new(
-        () => new DbContextOptionsBuilder<DavDatabaseContext>()
+    private static readonly Lazy<DbContextOptions<DavDatabaseContext>> Options = new(() =>
+        new DbContextOptionsBuilder<DavDatabaseContext>()
             .UseSqlite($"Data Source={DatabaseFilePath}")
             .AddInterceptors(new SqliteForeignKeyEnabler())
+            .ReplaceService<IMigrationsSqlGenerator, SqliteMigrationsSqlGenerator<SqliteMigrationsSqlGenerator>>()
             .Options
     );
 
@@ -32,6 +37,15 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
     public DbSet<HealthCheckStat> HealthCheckStats => Set<HealthCheckStat>();
     public DbSet<ConfigItem> ConfigItems => Set<ConfigItem>();
     public DbSet<BlobCleanupItem> BlobCleanupItems => Set<BlobCleanupItem>();
+    public DbSet<HistoryCleanupItem> HistoryCleanupItems => Set<HistoryCleanupItem>();
+    public DbSet<DavCleanupItem> DavCleanupItems => Set<DavCleanupItem>();
+    public DbSet<NzbName> NzbNames => Set<NzbName>();
+    public DbSet<NzbBlobCleanupItem> NzbBlobCleanupItems => Set<NzbBlobCleanupItem>();
+
+    // blob items
+    public List<DavNzbFile> BlobNzbFiles = [];
+    public List<DavRarFile> BlobRarFiles = [];
+    public List<DavMultipartFile> BlobMultipartFiles = [];
 
     // tables
     protected override void OnModelCreating(ModelBuilder b)
@@ -78,6 +92,10 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                 .HasConversion<int>()
                 .IsRequired();
 
+            e.Property(i => i.SubType)
+                .HasConversion<int>()
+                .IsRequired();
+
             e.Property(i => i.Path)
                 .IsRequired();
 
@@ -105,17 +123,31 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                     x => x.HasValue ? DateTimeOffset.FromUnixTimeSeconds(x.Value) : null
                 );
 
-            e.HasOne(i => i.Parent)
-                .WithMany(p => p.Children)
-                .HasForeignKey(i => i.ParentId)
-                .OnDelete(DeleteBehavior.Cascade);
+            e.Property(i => i.FileBlobId)
+                .ValueGeneratedNever()
+                .IsRequired(false);
+
+            e.Property(i => i.HistoryItemId)
+                .ValueGeneratedNever()
+                .IsRequired(false);
+
+            e.Property(i => i.NzbBlobId)
+                .ValueGeneratedNever()
+                .IsRequired(false);
 
             e.HasIndex(i => new { i.ParentId, i.Name })
                 .IsUnique();
 
             e.HasIndex(i => new { i.IdPrefix, i.Type });
 
-            e.HasIndex(i => new { i.Type, i.NextHealthCheck, i.ReleaseDate, i.Id });
+            e.HasIndex(i => new { i.Type, i.HistoryItemId, i.NextHealthCheck, i.ReleaseDate, i.Id });
+
+            e.HasIndex(i => new { i.HistoryItemId, i.Type, i.CreatedAt });
+
+            e.HasIndex(i => new { i.HistoryItemId, i.SubType, i.CreatedAt });
+
+            e.HasIndex(i => i.NzbBlobId)
+                .IsUnique(false);
         });
 
         // DavNzbFile
@@ -288,6 +320,9 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
             e.Property(i => i.DownloadDirId)
                 .IsRequired(false);
 
+            e.Property(i => i.NzbBlobId)
+                .IsRequired(false);
+
             e.HasIndex(i => new { i.CreatedAt })
                 .IsUnique(false);
 
@@ -298,6 +333,9 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                 .IsUnique(false);
 
             e.HasIndex(i => new { i.Category, i.DownloadDirId })
+                .IsUnique(false);
+
+            e.HasIndex(i => i.NzbBlobId)
                 .IsUnique(false);
         });
 
@@ -417,5 +455,150 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
             e.Property(i => i.Id)
                 .ValueGeneratedNever();
         });
+
+        // HistoryCleanupItem
+        b.Entity<HistoryCleanupItem>(e =>
+        {
+            e.ToTable("HistoryCleanupItems");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.DeleteMountedFiles)
+                .IsRequired();
+        });
+
+        // DavCleanupItem
+        b.Entity<DavCleanupItem>(e =>
+        {
+            e.ToTable("DavCleanupItems");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+        });
+
+        // NzbName
+        b.Entity<NzbName>(e =>
+        {
+            e.ToTable("NzbNames");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+
+            e.Property(i => i.FileName)
+                .IsRequired();
+        });
+
+        // NzbBlobCleanupItem
+        b.Entity<NzbBlobCleanupItem>(e =>
+        {
+            e.ToTable("NzbBlobCleanupItems");
+            e.HasKey(i => i.Id);
+
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
+        });
+    }
+
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = new CancellationToken())
+    {
+        try
+        {
+            // save blobs to blob-store
+            foreach (var blobNzbFile in BlobNzbFiles)
+                await BlobStore.WriteBlob(blobNzbFile.Id, blobNzbFile);
+            foreach (var blobRarFile in BlobRarFiles)
+                await BlobStore.WriteBlob(blobRarFile.Id, blobRarFile);
+            foreach (var blobMultipartFile in BlobMultipartFiles)
+                await BlobStore.WriteBlob(blobMultipartFile.Id, blobMultipartFile);
+
+            // save db changes
+            var addedOrRemovedDavItems = GetAddedOrRemovedDavItems();
+            var result = await base.SaveChangesAsync(cancellationToken);
+            _ = RcloneVfsForget(addedOrRemovedDavItems);
+
+            // clear pending blob writes
+            BlobNzbFiles.Clear();
+            BlobRarFiles.Clear();
+            BlobMultipartFiles.Clear();
+
+            // return
+            return result;
+        }
+        catch
+        {
+            // on errors, remove any already-written blob files
+            foreach (var blobNzbFile in BlobNzbFiles)
+                BlobStore.Delete(blobNzbFile.Id);
+            foreach (var blobRarFile in BlobRarFiles)
+                BlobStore.Delete(blobRarFile.Id);
+            foreach (var blobMultipartFile in BlobMultipartFiles)
+                BlobStore.Delete(blobMultipartFile.Id);
+
+            // rethrow the exception
+            throw;
+        }
+    }
+
+    private List<DavItem> GetAddedOrRemovedDavItems()
+    {
+        return ChangeTracker.Entries<DavItem>()
+            .Where(x => x.State is EntityState.Added or EntityState.Deleted)
+            .Select(x => x.Entity)
+            .ToList();
+    }
+
+    private static List<string> GetRcloneVfsForgetDirectories(List<DavItem> addedOrRemoved)
+    {
+        var contentDirs = addedOrRemoved
+            .Select(x => x.Path)
+            .Select(x => Path.GetDirectoryName(x)!)
+            .ToList();
+
+        var idDirs = addedOrRemoved
+            .Where(x => x.Type == DavItem.ItemType.UsenetFile)
+            .Select(x => DatabaseStoreSymlinkFile.GetTargetPath(x.Id))
+            .Select(x => Path.GetDirectoryName(x)!)
+            .ToList();
+
+        var completedSymlinkDirs = contentDirs
+            .Where(x => x.StartsWith("/content"))
+            .Select(x => $"/completed-symlinks{x["/content".Length..]}")
+            .ToList();
+
+        return contentDirs
+            .Concat(completedSymlinkDirs)
+            .Concat(idDirs)
+            .Distinct()
+            .ToList();
+    }
+
+    public static Task RcloneVfsForget(List<DavItem> addedOrRemovedDavItems)
+    {
+        if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
+        if (RcloneClient.Host == null) return Task.CompletedTask;
+        if (addedOrRemovedDavItems.Count == 0) return Task.CompletedTask;
+        var vfsForgetPaths = GetRcloneVfsForgetDirectories(addedOrRemovedDavItems);
+        if (vfsForgetPaths.Count == 0) return Task.CompletedTask;
+        return RcloneClient.ForgetVfsPaths(vfsForgetPaths);
+    }
+
+    public static Task RcloneVfsForget(List<string> paths)
+    {
+        if (!RcloneClient.IsRemoteControlEnabled) return Task.CompletedTask;
+        if (RcloneClient.Host == null) return Task.CompletedTask;
+        if (paths.Count == 0) return Task.CompletedTask;
+        return RcloneClient.ForgetVfsPaths(paths);
+    }
+
+    public void ClearChangeTracker()
+    {
+        ChangeTracker.Clear();
+        BlobNzbFiles.Clear();
+        BlobRarFiles.Clear();
+        BlobMultipartFiles.Clear();
     }
 }

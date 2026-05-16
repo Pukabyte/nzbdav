@@ -263,12 +263,41 @@ public class ConfigManager
         return GetConfigValue("general.base-url") ?? "http://localhost:3000";
     }
 
+    public bool IsRcloneRemoteControlEnabled()
+    {
+        var defaultValue = false;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("rclone.rc-enabled"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
+    public string? GetRcloneHost()
+    {
+        return GetConfigValue("rclone.host");
+    }
+
+    public string? GetRcloneUser()
+    {
+        return GetConfigValue("rclone.user");
+    }
+
+    public string? GetRclonePass()
+    {
+        return GetConfigValue("rclone.pass");
+    }
+
     public string GetUserAgent()
     {
         var defaultValue = $"nzbdav/{AppVersion}";
         return StringUtil.EmptyToNull(GetConfigValue("api.user-agent"))
                ?? EnvironmentUtil.GetEnvironmentVariable("NZB_GRAB_USER_AGENT")
                ?? defaultValue;
+    }
+
+    public bool IsDatabaseStartupVacuumEnabled()
+    {
+        var defaultValue = false;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("db.is-startup-vacuum-enabled"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
     public class ConfigEventArgs : EventArgs

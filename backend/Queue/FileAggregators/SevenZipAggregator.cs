@@ -38,25 +38,29 @@ public class SevenZipAggregator(
             if (sevenZipFiles.Count == 1 && ObfuscationUtil.IsProbablyObfuscated(name))
                 name = mountDirectory.Name + Path.GetExtension(name);
 
+            var davMultipartFile = new DavMultipartFile()
+            {
+                Id = Guid.NewGuid(),
+                Metadata = davMultipartFileMeta
+            };
+
             var davItem = DavItem.New(
                 id: Guid.NewGuid(),
                 parent: parentDirectory,
                 name: name,
                 fileSize: davMultipartFileMeta.AesParams?.DecodedSize
                     ?? davMultipartFileMeta.FileParts.Sum(x => x.FilePartByteRange.Count),
-                type: DavItem.ItemType.MultipartFile,
+                type: DavItem.ItemType.UsenetFile,
+                subType: DavItem.ItemSubType.MultipartFile,
                 releaseDate: sevenZipFile.ReleaseDate,
-                lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null
+                lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null,
+                historyItemId: MountDirectory.HistoryItemId,
+                fileBlobId: davMultipartFile.Id,
+                nzbBlobId: MountDirectory.HistoryItemId
             );
 
-            var davMultipartFile = new DavMultipartFile()
-            {
-                Id = davItem.Id,
-                Metadata = davMultipartFileMeta
-            };
-
             dbClient.Ctx.Items.Add(davItem);
-            dbClient.Ctx.MultipartFiles.Add(davMultipartFile);
+            dbClient.Ctx.BlobMultipartFiles.Add(davMultipartFile);
         }
     }
 }

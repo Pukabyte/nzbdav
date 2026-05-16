@@ -24,7 +24,7 @@ namespace NzbWebDAV.Queue;
 
 public class QueueItemProcessor(
     QueueItem queueItem,
-    Stream queueNzbStream,
+    Stream? queueNzbStream,
     DavDatabaseClient dbClient,
     INntpClient usenetClient,
     ConfigManager configManager,
@@ -93,6 +93,12 @@ public class QueueItemProcessor(
 
     private async Task ProcessQueueItemAsync(DateTime startTime)
     {
+        // if the `/blobs` folder is tampered with outside the nzbdav process,
+        // then it is possible that the nzb file goes missing.
+        if (queueNzbStream is null)
+            throw new Exception($"The NZB file could not be found.");
+
+        // load config for handling duplicate nzbs
         var existingMountFolder = await GetMountFolder().ConfigureAwait(false);
         var duplicateNzbBehavior = configManager.GetDuplicateNzbBehavior();
 
@@ -226,7 +232,6 @@ public class QueueItemProcessor(
     )
     {
         var groups = fileInfos
-            .DistinctBy(x => x.FileName)
             .GroupBy(GetGroup);
 
         foreach (var group in groups)
@@ -283,8 +288,11 @@ public class QueueItemProcessor(
             name: queueItem.Category,
             fileSize: null,
             type: DavItem.ItemType.Directory,
+            subType: DavItem.ItemSubType.Directory,
             releaseDate: null,
-            lastHealthCheck: null
+            lastHealthCheck: null,
+            historyItemId: null,
+            fileBlobId: null
         );
         dbClient.Ctx.Items.Add(categoryFolder);
         return categoryFolder;
@@ -306,8 +314,11 @@ public class QueueItemProcessor(
             name: queueItem.JobName,
             fileSize: null,
             type: DavItem.ItemType.Directory,
+            subType: DavItem.ItemSubType.Directory,
             releaseDate: null,
-            lastHealthCheck: null
+            lastHealthCheck: null,
+            historyItemId: queueItem.Id,
+            fileBlobId: null
         );
         dbClient.Ctx.Items.Add(mountFolder);
         return Task.FromResult(mountFolder);
@@ -328,8 +339,11 @@ public class QueueItemProcessor(
                 name: name,
                 fileSize: null,
                 type: DavItem.ItemType.Directory,
+                subType: DavItem.ItemSubType.Directory,
                 releaseDate: null,
-                lastHealthCheck: null
+                lastHealthCheck: null,
+                historyItemId: queueItem.Id,
+                fileBlobId: null
             );
             dbClient.Ctx.Items.Add(mountFolder);
             return mountFolder;
@@ -354,6 +368,7 @@ public class QueueItemProcessor(
             DownloadTimeSeconds = (int)(DateTime.Now - jobStartTime).TotalSeconds,
             FailMessage = errorMessage,
             DownloadDirId = mountFolder?.Id,
+            NzbBlobId = queueItem.Id,
         };
     }
 
@@ -373,6 +388,7 @@ public class QueueItemProcessor(
         await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
         _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot.ToJson());
+        _ = DavDatabaseContext.RcloneVfsForget(["/nzbs"]);
         _ = RefreshMonitoredDownloads();
     }
 

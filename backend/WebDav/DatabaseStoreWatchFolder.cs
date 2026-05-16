@@ -58,7 +58,7 @@ public class DatabaseStoreWatchFolder(
         var addFileRequest = new AddFileRequest()
         {
             FileName = request.Name,
-            MimeType = "application/x-nzb",
+            ContentType = "application/x-nzb",
             Category = configManager.GetManualUploadCategory(),
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.RepairUnpackDelete,
@@ -88,7 +88,7 @@ public class DatabaseStoreWatchFolder(
             return DavStatusCode.NotFound;
 
         // delete the item
-        dbClient.Ctx.ChangeTracker.Clear();
+        dbClient.Ctx.ClearChangeTracker();
         await controller.RemoveFromQueue(new RemoveFromQueueRequest()
         {
             NzoIds = [item.Id],

@@ -204,7 +204,7 @@ public class ConfigManager
 
     public bool IsIgnoreSabHistoryLimitEnabled()
     {
-        var defaultValue = true;
+        var defaultValue = false;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("api.ignore-history-limit"));
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
@@ -263,12 +263,70 @@ public class ConfigManager
         return GetConfigValue("general.base-url") ?? "http://localhost:3000";
     }
 
+    public bool IsRcloneRemoteControlEnabled()
+    {
+        var defaultValue = false;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("rclone.rc-enabled"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
+    public string? GetRcloneHost()
+    {
+        return GetConfigValue("rclone.host");
+    }
+
+    public string? GetRcloneUser()
+    {
+        return GetConfigValue("rclone.user");
+    }
+
+    public string? GetRclonePass()
+    {
+        return GetConfigValue("rclone.pass");
+    }
+
     public string GetUserAgent()
     {
         var defaultValue = $"nzbdav/{AppVersion}";
         return StringUtil.EmptyToNull(GetConfigValue("api.user-agent"))
                ?? EnvironmentUtil.GetEnvironmentVariable("NZB_GRAB_USER_AGENT")
                ?? defaultValue;
+    }
+
+    public bool IsDatabaseStartupVacuumEnabled()
+    {
+        var defaultValue = false;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("db.is-startup-vacuum-enabled"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
+    public bool IsNzbBackupEnabled()
+    {
+        var defaultValue = false;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("api.nzb-backup-enabled"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
+    public string? GetNzbBackupLocation()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("api.nzb-backup-location"));
+    }
+
+    public bool IsRemoveOrphanedFilesScheduleEnabled()
+    {
+        var defaultValue = false;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("maintenance.remove-orphaned-schedule-enabled"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
+    public TimeSpan RemoveOrphanedFilesSchedule()
+    {
+        var defaultValue = TimeSpan.Zero;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("maintenance.remove-orphaned-schedule-time"));
+        if (configValue == null) return defaultValue;
+        if (!int.TryParse(configValue, out var totalMinutes)) return defaultValue;
+        if (totalMinutes < 0 || totalMinutes >= 24 * 60) return defaultValue;
+        return TimeSpan.FromMinutes(totalMinutes);
     }
 
     public class ConfigEventArgs : EventArgs

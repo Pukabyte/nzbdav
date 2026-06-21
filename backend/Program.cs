@@ -6,6 +6,7 @@ using NWebDav.Server;
 using NWebDav.Server.Stores;
 using NzbWebDAV.Api.SabControllers;
 using NzbWebDAV.Auth;
+using NzbWebDAV.Clients.Rclone;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -51,6 +52,9 @@ class Program
             .WriteTo.Console(theme: AnsiConsoleTheme.Code)
             .CreateLogger();
 
+        // Block upgrades to version 0.6.x
+        BlockUpgradesToV06X();
+
         // initialize database
         await using var databaseContext = new DavDatabaseContext();
 
@@ -62,12 +66,16 @@ class Program
             await databaseContext.Database
                 .MigrateAsync(targetMigration, SigtermUtil.GetCancellationToken())
                 .ConfigureAwait(false);
+            await PerformDatabaseVacuumIfEnabled();
             return;
         }
 
         // initialize the config-manager
         var configManager = new ConfigManager();
         await configManager.LoadConfig().ConfigureAwait(false);
+
+        // initialize rclone client
+        RcloneClient.Initialize(configManager);
 
         // initialize websocket-manager
         var websocketManager = new WebsocketManager();
@@ -89,7 +97,12 @@ class Program
             .AddHostedService<HealthCheckService>()
             .AddHostedService<ArrMonitoringService>()
             .AddHostedService<BlobCleanupService>()
+            .AddHostedService<NzbBlobCleanupService>()
+            .AddHostedService<HistoryCleanupService>()
+            .AddHostedService<DavCleanupService>()
+            .AddHostedService<UsenetFileToBlobstoreMigrationService>()
             .AddHostedService<ArticleCacheCleanupService>()
+            .AddHostedService<RemoveOrphanedFilesSchedulerService>()
             .AddScoped<DavDatabaseContext>()
             .AddScoped<DavDatabaseClient>()
             .AddScoped<DatabaseStore>()
@@ -108,7 +121,7 @@ class Program
         // run
         var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();
-        app.UseWebSockets();
+        app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
         app.MapHealthChecks("/health");
         app.Map("/ws", websocketManager.HandleRoute);
         app.MapControllers();
@@ -116,5 +129,52 @@ class Program
         app.UseNWebDav();
         app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
         await app.RunAsync().ConfigureAwait(false);
+    }
+
+    private static void BlockUpgradesToV06X()
+    {
+        // If the database file doesn't exist.
+        // Then this is a new installation.
+        // Do nothing.
+        if (!File.Exists(DavDatabaseContext.DatabaseFilePath)) return;
+
+        // If there is no pending database migration,
+        // Then the user has already upgraded.
+        // Do nothing.
+        using var databaseContext = new DavDatabaseContext();
+        const string migration = "20260226053712_Add-NzbBlobId-And-NzbNames";
+        var hasPendingMigration = databaseContext.Database.GetPendingMigrations().Contains(migration);
+        if (!hasPendingMigration) return;
+
+        // If the user has set the UPGRADE env variable,
+        // Then they have acknowledged the upgrade message.
+        // Do nothing.
+        var upgradeEnv = EnvironmentUtil.GetEnvironmentVariable("UPGRADE");
+        if (upgradeEnv == "0.6.0") return;
+
+        // Otherwise, display the upgrade message, and exit.
+        Console.WriteLine(
+            """
+            Version 0.6.0 of nzbdav is NOT backwards compatible.
+            You can upgrade, but you won't be able to downgrade.
+            Make a backup of your entire /config directory prior to upgrading.
+            The only way to downgrade back to a previous version is by restoring this backup.
+            To acknowledge this message and continue upgrading, set the env variable UPGRADE=0.6.0
+            """
+        );
+        Environment.Exit(1);
+    }
+
+    private static async Task PerformDatabaseVacuumIfEnabled()
+    {
+        var configManager = new ConfigManager();
+        await configManager.LoadConfig().ConfigureAwait(false);
+        if (configManager.IsDatabaseStartupVacuumEnabled())
+        {
+            Console.Write("Performing database vacuum...");
+            await using var databaseContext = new DavDatabaseContext();
+            await databaseContext.Database.ExecuteSqlRawAsync("VACUUM;");
+            Console.WriteLine("Done.");
+        }
     }
 }

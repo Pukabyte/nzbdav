@@ -4,8 +4,8 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
-using NzbWebDAV.Streams;
 using NzbWebDAV.WebDav.Base;
+using NzbWebDAV.Streams;
 
 namespace NzbWebDAV.WebDav;
 
@@ -30,13 +30,13 @@ public class DatabaseStoreIdFile(
 
     private IStoreItem GetItem(DavItem davItem)
     {
-        return davItem.Type switch
+        return davItem.SubType switch
         {
-            DavItem.ItemType.NzbFile =>
+            DavItem.ItemSubType.NzbFile =>
                 new DatabaseStoreNzbFile(davItem, httpContext, dbClient, usenetClient, configManager, activeStreamTracker),
-            DavItem.ItemType.RarFile =>
+            DavItem.ItemSubType.RarFile =>
                 new DatabaseStoreRarFile(davItem, httpContext, dbClient, usenetClient, configManager, activeStreamTracker),
-            DavItem.ItemType.MultipartFile =>
+            DavItem.ItemSubType.MultipartFile =>
                 new DatabaseStoreMultipartFile(davItem, httpContext, dbClient, usenetClient, configManager, activeStreamTracker),
             _ => throw new ArgumentException("Unrecognized id child type.")
         };

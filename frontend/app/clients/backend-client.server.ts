@@ -261,12 +261,14 @@ export type HistorySlot = {
     storage: string,
     download_time: number,
     fail_message: string,
+    nzb_blob_id?: string,
 }
 
 export type DirectoryItem = {
     name: string,
     isDirectory: boolean,
     size: number | null | undefined,
+    nzbBlobId?: string,
 }
 
 export type ConfigItem = {

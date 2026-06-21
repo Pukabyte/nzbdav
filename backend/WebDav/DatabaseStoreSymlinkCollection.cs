@@ -78,11 +78,6 @@ public class DatabaseStoreSymlinkCollection(
             .ToArray();
     }
 
-    protected override bool SupportsFastMove(SupportsFastMoveRequest request)
-    {
-        return false;
-    }
-
     protected override Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
     {
         // Cannot delete from symlink root folder
@@ -124,15 +119,15 @@ public class DatabaseStoreSymlinkCollection(
 
     private IStoreItem GetItem(DavItem davItem)
     {
-        return davItem.Type switch
+        return davItem.SubType switch
         {
-            DavItem.ItemType.Directory =>
+            DavItem.ItemSubType.Directory =>
                 new DatabaseStoreSymlinkCollection(davItem, dbClient, configManager),
-            DavItem.ItemType.NzbFile =>
+            DavItem.ItemSubType.NzbFile =>
                 new DatabaseStoreSymlinkFile(davItem, configManager),
-            DavItem.ItemType.RarFile =>
+            DavItem.ItemSubType.RarFile =>
                 new DatabaseStoreSymlinkFile(davItem, configManager),
-            DavItem.ItemType.MultipartFile =>
+            DavItem.ItemSubType.MultipartFile =>
                 new DatabaseStoreSymlinkFile(davItem, configManager),
             _ => throw new ArgumentException("Unrecognized directory child type.")
         };

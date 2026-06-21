@@ -19,24 +19,28 @@ public class FileAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, 
             var parentDirectory = EnsureParentDirectory(result.FileName);
             var name = Path.GetFileName(result.FileName);
 
+            var davNzbFile = new DavNzbFile()
+            {
+                Id = Guid.NewGuid(),
+                SegmentIds = result.NzbFile.GetSegmentIds(),
+            };
+
             var davItem = DavItem.New(
                 id: Guid.NewGuid(),
                 parent: parentDirectory,
                 name: name,
                 fileSize: result.FileSize,
-                type: DavItem.ItemType.NzbFile,
+                type: DavItem.ItemType.UsenetFile,
+                subType: DavItem.ItemSubType.NzbFile,
                 releaseDate: result.ReleaseDate,
-                lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null
+                lastHealthCheck: checkedFullHealth ? DateTimeOffset.UtcNow : null,
+                historyItemId: MountDirectory.HistoryItemId,
+                fileBlobId: davNzbFile.Id,
+                nzbBlobId: MountDirectory.HistoryItemId
             );
 
-            var davNzbFile = new DavNzbFile()
-            {
-                Id = davItem.Id,
-                SegmentIds = result.NzbFile.GetSegmentIds(),
-            };
-
             dbClient.Ctx.Items.Add(davItem);
-            dbClient.Ctx.NzbFiles.Add(davNzbFile);
+            dbClient.Ctx.BlobNzbFiles.Add(davNzbFile);
         }
     }
 }

@@ -14,11 +14,12 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
     const [connected, setConnected] = useState<boolean>(false);
     const [progress, setProgress] = useState<string | null>(null);
     const [isFetching, setIsFetching] = useState<boolean>(false);
+    const progressMessage = progress?.replace('Dry Run - ', '');
 
     // derived variables
     const libraryDir = savedConfig["media.library-dir"];
-    const isDone = progress?.startsWith("Done");
-    const isFinished = progress?.startsWith("Done") || progress?.startsWith("Failed") || progress?.startsWith("Aborted");
+    const isDone = progressMessage?.startsWith("Done");
+    const isFinished = progressMessage?.startsWith("Done") || progressMessage?.startsWith("Failed") || progressMessage?.startsWith("Aborted");
     const isRunning = !isFinished && (isFetching || progress !== null);
     const isRunButtonEnabled = !!libraryDir && connected && !isRunning;
     const runButtonVariant = isRunButtonEnabled ? 'success' : 'secondary';
@@ -116,8 +117,11 @@ export function RemoveUnlinkedFiles({ savedConfig }: RemoveUnlinkedFilesProps) {
                         The dry-run will not delete anything.
                         <br />
                         <br />
-                        Note: This task is intended to cleanup old, abandoned, files.
-                        Files added less than twenty-four hours ago will not be deleted.
+                        Note: Files still present in the History table will not be removed when running this task.
+                        It is assumed that files still present in the History table have not yet been imported by Arrs
+                        and they are expected to not yet have a corresponding symlink/strm in the Library folder.
+                        These files will remain intact until Arrs have a chance to process them and remove them from the
+                        History table.
                     </Form.Text>
                 </Form.Group>
             </div>

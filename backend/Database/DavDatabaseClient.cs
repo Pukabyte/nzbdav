@@ -19,9 +19,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         return ctx.Items
             .Where(i => i.IdPrefix == prefix)
-            .Where(i => i.Type == DavItem.ItemType.NzbFile
-                        || i.Type == DavItem.ItemType.RarFile
-                        || i.Type == DavItem.ItemType.MultipartFile)
+            .Where(i => i.Type == DavItem.ItemType.UsenetFile)
             .ToListAsync();
     }
 
@@ -70,10 +68,53 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
         return Convert.ToInt64(result);
     }
 
-    // nzbfile
-    public async Task<DavNzbFile?> GetNzbFileAsync(Guid id, CancellationToken ct = default)
+    // usenet files
+    public async Task<DavNzbFile?> GetDavNzbFileAsync(DavItem davItem, CancellationToken ct = default)
     {
-        return await ctx.NzbFiles.FirstOrDefaultAsync(x => x.Id == id, ct).ConfigureAwait(false);
+        // attempt to read from blob-store
+        var blobId = davItem.FileBlobId;
+        if (blobId.HasValue)
+        {
+            var blob = await BlobStore.ReadBlob<DavNzbFile>(blobId.Value);
+            if (blob is not null) return blob;
+        }
+
+        // read from database
+        return await ctx.NzbFiles
+            .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<DavRarFile?> GetDavRarFileAsync(DavItem davItem, CancellationToken ct = default)
+    {
+        // attempt to read from blob-store
+        var blobId = davItem.FileBlobId;
+        if (blobId.HasValue)
+        {
+            var blob = await BlobStore.ReadBlob<DavRarFile>(blobId.Value);
+            if (blob is not null) return blob;
+        }
+
+        // read from database
+        return await ctx.RarFiles
+            .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<DavMultipartFile?> GetDavMultipartFileAsync(DavItem davItem, CancellationToken ct = default)
+    {
+        // attempt to read from blob-store
+        var blobId = davItem.FileBlobId;
+        if (blobId.HasValue)
+        {
+            var blob = await BlobStore.ReadBlob<DavMultipartFile>(blobId.Value);
+            if (blob is not null) return blob;
+        }
+
+        // read from database
+        return await ctx.MultipartFiles
+            .FirstOrDefaultAsync(x => x.Id == davItem.Id, ct)
+            .ConfigureAwait(false);
     }
 
     // queue
@@ -157,17 +198,37 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         if (deleteFiles)
         {
-            await Ctx.Items
-                .Where(d => Ctx.HistoryItems
-                    .Where(h => ids.Contains(h.Id) && h.DownloadDirId != null)
-                    .Select(h => h.DownloadDirId!)
-                    .Contains(d.Id))
-                .ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        }
+            var results = await (
+                from h in Ctx.HistoryItems
+                where ids.Contains(h.Id)
+                join d in Ctx.Items on h.DownloadDirId equals d.Id into items
+                from d in items.DefaultIfEmpty()
+                select new { HistoryItem = h, DavItem = d }
+            ).ToListAsync(ct).ConfigureAwait(false);
 
-        await Ctx.HistoryItems
-            .Where(x => ids.Contains(x.Id))
-            .ExecuteDeleteAsync(ct).ConfigureAwait(false);
+            var historyItems = results.Select(r => r.HistoryItem).ToList();
+            var davItems = results.Where(r => r.DavItem != null).Select(r => r.DavItem!).ToList();
+            Ctx.Items.RemoveRange(davItems);
+            Ctx.HistoryItems.RemoveRange(historyItems);
+            Ctx.HistoryCleanupItems.AddRange(historyItems.Select(x => new HistoryCleanupItem
+            {
+                Id = x.Id,
+                DeleteMountedFiles = deleteFiles
+            }));
+            return;
+        }
+        var existingItems = await Ctx.HistoryItems
+            .Where(h => ids.Contains(h.Id))
+            .ToListAsync(ct).ConfigureAwait(false);
+        if (existingItems.Count > 0)
+        {
+            Ctx.HistoryItems.RemoveRange(existingItems);
+            Ctx.HistoryCleanupItems.AddRange(existingItems.Select(x => new HistoryCleanupItem
+            {
+                Id = x.Id,
+                DeleteMountedFiles = deleteFiles
+            }));
+        }
     }
 
     private class FileSizeResult

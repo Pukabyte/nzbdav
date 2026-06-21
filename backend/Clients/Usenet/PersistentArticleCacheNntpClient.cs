@@ -1,11 +1,9 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using NzbWebDAV.Cache;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
-using NzbWebDAV.Database;
 using NzbWebDAV.Streams;
 using Serilog;
 using UsenetSharp.Models;
@@ -14,89 +12,59 @@ using UsenetSharp.Streams;
 namespace NzbWebDAV.Clients.Usenet;
 
 /// <summary>
-/// Persistent article cache decorator. Stores decoded article bytes to disk
-/// keyed by SHA256 of segment ID. Cache hits skip the download semaphore entirely.
+/// Persistent article cache decorator backed by SQLite index + pack files.
+/// Stores decoded article bytes in append-only pack files (~512MB each)
+/// indexed by a SQLite database, replacing millions of individual files
+/// with thousands of packs + one DB.
+///
+/// Legacy file-per-article cache entries are migrated lazily on access
+/// and cleaned up in the background.
 /// </summary>
 public class PersistentArticleCacheNntpClient : WrappingNntpClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true };
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _pendingRequests = new();
-    private readonly ConcurrentDictionary<string, CacheEntry> _cachedSegments = new();
+    private readonly ConcurrentDictionary<string, ArticleCacheDb.CacheEntry> _cachedSegments = new();
+    private readonly ArticleCacheDb _db;
+    private readonly PackFileManager _packManager;
     private readonly string _cacheDir;
+    private readonly LegacyCacheMigrator _legacyMigrator;
 
-    private record CacheEntry(
-        UsenetYencHeader YencHeaders,
-        bool HasArticleHeaders,
-        UsenetArticleHeader? ArticleHeaders);
+    // Batch touch: collect accessed hashes and flush periodically
+    private readonly ConcurrentDictionary<string, byte> _touchBuffer = new();
+    private readonly Timer _touchFlushTimer;
 
-    private record CacheMetadata(
-        UsenetYencHeader YencHeaders,
-        UsenetArticleHeader? ArticleHeaders);
+    // Legacy cleanup state
+    private int _legacyCleanupShardIndex;
 
     public PersistentArticleCacheNntpClient(INntpClient usenetClient, ConfigManager configManager)
         : base(usenetClient)
     {
         _cacheDir = configManager.GetArticleCacheDir();
-        Directory.CreateDirectory(_cacheDir);
-        Task.Run(LoadCacheMetadata);
+        _db = new ArticleCacheDb(_cacheDir);
+        _packManager = new PackFileManager(_cacheDir);
+        _legacyMigrator = new LegacyCacheMigrator(_cacheDir, _db, _packManager);
+
+        // Flush touch buffer every 30 seconds + clean one legacy shard per tick
+        _touchFlushTimer = new Timer(_ => OnTimerTick(), null,
+            TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+
+        Task.Run(LoadCacheIndex);
     }
 
-    private void LoadCacheMetadata()
+    private void LoadCacheIndex()
     {
         try
         {
-            if (!Directory.Exists(_cacheDir)) return;
+            var entries = _db.LoadAll();
+            foreach (var (hash, entry) in entries)
+                _cachedSegments.TryAdd(hash, entry);
 
-            var metaFiles = Directory.EnumerateFiles(_cacheDir, "*.meta", SearchOption.AllDirectories);
-            var count = 0;
-            var skipped = 0;
-            foreach (var metaFile in metaFiles)
-            {
-                try
-                {
-                    var json = File.ReadAllText(metaFile);
-                    var metadata = JsonSerializer.Deserialize<CacheMetadata>(json, JsonOptions);
-                    if (metadata == null) continue;
-
-                    // Skip entries with missing yenc field data (caused by
-                    // pre-fix serialization that dropped public fields).
-                    // These will be re-fetched from usenet on next access.
-                    if (metadata.YencHeaders.PartSize == 0)
-                    {
-                        skipped++;
-                        continue;
-                    }
-
-                    // Extract segment hash from filename (remove .meta extension)
-                    var hash = Path.GetFileNameWithoutExtension(metaFile);
-                    var dataFile = Path.Combine(Path.GetDirectoryName(metaFile)!, hash);
-                    if (!File.Exists(dataFile)) continue;
-
-                    _cachedSegments.TryAdd(hash, new CacheEntry(
-                        YencHeaders: metadata.YencHeaders,
-                        HasArticleHeaders: metadata.ArticleHeaders != null,
-                        ArticleHeaders: metadata.ArticleHeaders));
-                    count++;
-                }
-                catch (JsonException)
-                {
-                    // Old .meta files are missing required yenc fields
-                    // (pre-fix serialization dropped public fields).
-                    // Silently skip — they'll be re-fetched on next access.
-                    skipped++;
-                }
-                catch (Exception e)
-                {
-                    Log.Warning(e, "Failed to load cache metadata from {MetaFile}", metaFile);
-                }
-            }
-
-            if (count > 0 || skipped > 0)
-                Log.Information("Loaded {Count} entries from persistent article cache (skipped {Skipped} entries with missing yenc metadata)", count, skipped);
+            if (entries.Count > 0)
+                Log.Information("Article cache ready: {Count} entries indexed", entries.Count);
         }
         catch (Exception e)
         {
-            Log.Error(e, "Failed to scan persistent article cache directory");
+            Log.Error(e, "Failed to load article cache index");
         }
     }
 
@@ -117,12 +85,12 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
     {
         var hash = GetHash(segmentId);
 
-        // Fast path: skip semaphore entirely for cached segments
+        // Fast path: in-memory cache
         if (_cachedSegments.TryGetValue(hash, out var cachedEntry))
         {
-            TouchCacheFile(hash);
+            TouchEntry(hash);
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-            return ReadCachedBody(segmentId, hash, cachedEntry.YencHeaders);
+            return ReadCachedBody(segmentId, cachedEntry);
         }
 
         var semaphore = _pendingRequests.GetOrAdd(hash, _ => new SemaphoreSlim(1, 1));
@@ -139,15 +107,25 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
 
         try
         {
-            // Re-check after acquiring semaphore (another thread may have cached it)
+            // Re-check after lock
             if (_cachedSegments.TryGetValue(hash, out var existingEntry))
             {
-                TouchCacheFile(hash);
+                TouchEntry(hash);
                 onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-                return ReadCachedBody(segmentId, hash, existingEntry.YencHeaders);
+                return ReadCachedBody(segmentId, existingEntry);
             }
 
-            // Fetch and cache the body
+            // Check legacy cache — migrate on access
+            var legacyEntry = _legacyMigrator.TryMigrateEntry(hash);
+            if (legacyEntry != null)
+            {
+                _cachedSegments.TryAdd(hash, legacyEntry);
+                _pendingRequests.TryRemove(hash, out _);
+                onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                return ReadCachedBody(segmentId, legacyEntry);
+            }
+
+            // Fetch from usenet and cache
             var response = await base.DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -156,20 +134,18 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
             if (yencHeaders == null)
                 throw new InvalidOperationException($"Failed to read yenc headers for segment {segmentId}");
 
-            await CacheDecodedStreamAsync(hash, stream, cancellationToken).ConfigureAwait(false);
+            var (packId, offset, length) = await _packManager.AppendAsync(stream, cancellationToken)
+                .ConfigureAwait(false);
 
-            var entry = new CacheEntry(
-                YencHeaders: yencHeaders,
-                HasArticleHeaders: false,
-                ArticleHeaders: null);
+            _db.Insert(hash, packId, offset, length, yencHeaders, articleHeaders: null);
 
-            WriteCacheMetadata(hash, new CacheMetadata(yencHeaders, null));
+            var entry = new ArticleCacheDb.CacheEntry(
+                packId, offset, length, yencHeaders,
+                HasArticleHeaders: false, ArticleHeaders: null);
             _cachedSegments.TryAdd(hash, entry);
-
-            // Semaphore no longer needed — future calls hit the fast path
             _pendingRequests.TryRemove(hash, out _);
 
-            return ReadCachedBody(segmentId, hash, yencHeaders);
+            return ReadCachedBody(segmentId, entry);
         }
         finally
         {
@@ -182,12 +158,12 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
     {
         var hash = GetHash(segmentId);
 
-        // Fast path: skip semaphore entirely for cached segments with full headers
+        // Fast path: cached with full headers
         if (_cachedSegments.TryGetValue(hash, out var fastEntry) && fastEntry.HasArticleHeaders)
         {
-            TouchCacheFile(hash);
+            TouchEntry(hash);
             onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-            return ReadCachedArticle(segmentId, hash, fastEntry.YencHeaders, fastEntry.ArticleHeaders!);
+            return ReadCachedArticle(segmentId, fastEntry);
         }
 
         var semaphore = _pendingRequests.GetOrAdd(hash, _ => new SemaphoreSlim(1, 1));
@@ -204,18 +180,18 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
 
         try
         {
-            // Re-check after acquiring semaphore
+            // Re-check after lock
             if (_cachedSegments.TryGetValue(hash, out var cacheEntry))
             {
-                TouchCacheFile(hash);
+                TouchEntry(hash);
 
                 if (cacheEntry.HasArticleHeaders)
                 {
                     onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
-                    return ReadCachedArticle(segmentId, hash, cacheEntry.YencHeaders, cacheEntry.ArticleHeaders!);
+                    return ReadCachedArticle(segmentId, cacheEntry);
                 }
 
-                // Only body is cached, fetch article headers separately
+                // Body cached but missing article headers — fetch them
                 UsenetHeadResponse? headResponse = null;
                 try
                 {
@@ -226,18 +202,29 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
                     onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
                 }
 
-                var updatedEntry = new CacheEntry(
-                    YencHeaders: cacheEntry.YencHeaders,
-                    HasArticleHeaders: true,
-                    ArticleHeaders: headResponse.ArticleHeaders);
+                var updatedEntry = cacheEntry with
+                {
+                    HasArticleHeaders = true,
+                    ArticleHeaders = headResponse.ArticleHeaders
+                };
 
                 _cachedSegments.TryUpdate(hash, updatedEntry, cacheEntry);
-                WriteCacheMetadata(hash, new CacheMetadata(cacheEntry.YencHeaders, headResponse.ArticleHeaders));
+                _db.UpdateArticleHeaders(hash, headResponse.ArticleHeaders!);
 
-                return ReadCachedArticle(segmentId, hash, cacheEntry.YencHeaders, headResponse.ArticleHeaders!);
+                return ReadCachedArticle(segmentId, updatedEntry);
             }
 
-            // Fetch and cache the full article
+            // Check legacy cache — migrate on access
+            var legacyEntry = _legacyMigrator.TryMigrateEntry(hash);
+            if (legacyEntry != null)
+            {
+                _cachedSegments.TryAdd(hash, legacyEntry);
+                _pendingRequests.TryRemove(hash, out _);
+                onConnectionReadyAgain?.Invoke(ArticleBodyResult.Retrieved);
+                return ReadCachedArticle(segmentId, legacyEntry);
+            }
+
+            // Fetch from usenet and cache full article
             var response = await base.DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -246,20 +233,18 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
             if (yencHeaders == null)
                 throw new InvalidOperationException($"Failed to read yenc headers for segment {segmentId}");
 
-            await CacheDecodedStreamAsync(hash, stream, cancellationToken).ConfigureAwait(false);
+            var (packId, offset, length) = await _packManager.AppendAsync(stream, cancellationToken)
+                .ConfigureAwait(false);
 
-            var newEntry = new CacheEntry(
-                YencHeaders: yencHeaders,
-                HasArticleHeaders: true,
-                ArticleHeaders: response.ArticleHeaders);
+            _db.Insert(hash, packId, offset, length, yencHeaders, response.ArticleHeaders);
 
-            WriteCacheMetadata(hash, new CacheMetadata(yencHeaders, response.ArticleHeaders));
+            var newEntry = new ArticleCacheDb.CacheEntry(
+                packId, offset, length, yencHeaders,
+                HasArticleHeaders: true, ArticleHeaders: response.ArticleHeaders);
             _cachedSegments.TryAdd(hash, newEntry);
-
-            // Semaphore no longer needed — future calls hit the fast path
             _pendingRequests.TryRemove(hash, out _);
 
-            return ReadCachedArticle(segmentId, hash, yencHeaders, response.ArticleHeaders);
+            return ReadCachedArticle(segmentId, newEntry);
         }
         finally
         {
@@ -272,10 +257,9 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
     {
         var hash = GetHash(segmentId);
 
-        // Fast path: skip semaphore for cached segments
         if (_cachedSegments.ContainsKey(hash))
         {
-            TouchCacheFile(hash);
+            TouchEntry(hash);
             return new UsenetExclusiveConnection(onConnectionReadyAgain: null);
         }
 
@@ -285,7 +269,7 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
         {
             if (_cachedSegments.ContainsKey(hash))
             {
-                TouchCacheFile(hash);
+                TouchEntry(hash);
                 return new UsenetExclusiveConnection(onConnectionReadyAgain: null);
             }
 
@@ -300,15 +284,13 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
     public override Task<UsenetDecodedBodyResponse> DecodedBodyAsync(
         SegmentId segmentId, UsenetExclusiveConnection exclusiveConnection, CancellationToken cancellationToken)
     {
-        var onConnectionReadyAgain = exclusiveConnection.OnConnectionReadyAgain;
-        return DecodedBodyAsync(segmentId, onConnectionReadyAgain, cancellationToken);
+        return DecodedBodyAsync(segmentId, exclusiveConnection.OnConnectionReadyAgain, cancellationToken);
     }
 
     public override Task<UsenetDecodedArticleResponse> DecodedArticleAsync(
         SegmentId segmentId, UsenetExclusiveConnection exclusiveConnection, CancellationToken cancellationToken)
     {
-        var onConnectionReadyAgain = exclusiveConnection.OnConnectionReadyAgain;
-        return DecodedArticleAsync(segmentId, onConnectionReadyAgain, cancellationToken);
+        return DecodedArticleAsync(segmentId, exclusiveConnection.OnConnectionReadyAgain, cancellationToken);
     }
 
     public override Task<UsenetYencHeader> GetYencHeadersAsync(string segmentId, CancellationToken ct)
@@ -321,7 +303,7 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
 
     /// <summary>
     /// Remove evicted entries from the in-memory dictionary.
-    /// Called by ArticleCacheCleanupService after deleting files.
+    /// Called by ArticleCacheCleanupService after eviction.
     /// </summary>
     public void RemoveEntries(IEnumerable<string> hashes)
     {
@@ -332,82 +314,92 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
         }
     }
 
-    private async Task CacheDecodedStreamAsync(string hash, YencStream stream, CancellationToken cancellationToken)
-    {
-        var cachePath = GetCachePath(hash);
-        var directory = Path.GetDirectoryName(cachePath)!;
-        Directory.CreateDirectory(directory);
+    /// <summary>
+    /// Expose the DB and pack manager for the cleanup service.
+    /// </summary>
+    internal ArticleCacheDb CacheDb => _db;
+    internal PackFileManager PackManager => _packManager;
 
-        await using var fileStream = new FileStream(cachePath, FileMode.Create, FileAccess.Write, FileShare.None,
-            bufferSize: 81920, useAsync: true);
-        await stream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
-    }
-
-    private void WriteCacheMetadata(string hash, CacheMetadata metadata)
+    /// <summary>
+    /// Update in-memory cache entry location after compaction.
+    /// </summary>
+    internal void UpdateEntryLocation(string hash, string newPackId, long newOffset)
     {
-        try
+        if (_cachedSegments.TryGetValue(hash, out var existing))
         {
-            var metaPath = GetCachePath(hash) + ".meta";
-            var tmpPath = metaPath + ".tmp";
-            var json = JsonSerializer.Serialize(metadata, JsonOptions);
-            File.WriteAllText(tmpPath, json);
-            File.Move(tmpPath, metaPath, overwrite: true);
-        }
-        catch (Exception e)
-        {
-            Log.Warning(e, "Failed to write cache metadata for {Hash}", hash);
+            var updated = existing with { PackId = newPackId, Offset = newOffset };
+            _cachedSegments.TryUpdate(hash, updated, existing);
         }
     }
 
-    private UsenetDecodedBodyResponse ReadCachedBody(string segmentId, string hash, UsenetYencHeader yencHeaders)
+    private UsenetDecodedBodyResponse ReadCachedBody(string segmentId, ArticleCacheDb.CacheEntry entry)
     {
-        var cachePath = GetCachePath(hash);
-        var fileStream = new FileStream(cachePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-            bufferSize: 81920, useAsync: true);
-
+        var dataStream = _packManager.Read(entry.PackId, entry.Offset, entry.Length);
         return new UsenetDecodedBodyResponse
         {
             SegmentId = segmentId,
             ResponseCode = (int)UsenetResponseType.ArticleRetrievedBodyFollows,
             ResponseMessage = "222 - Article retrieved from persistent cache",
-            Stream = new CachedYencStream(yencHeaders, fileStream)
+            Stream = new CachedYencStream(entry.YencHeaders, dataStream)
         };
     }
 
-    private UsenetDecodedArticleResponse ReadCachedArticle(
-        string segmentId, string hash, UsenetYencHeader yencHeaders, UsenetArticleHeader articleHeaders)
+    private UsenetDecodedArticleResponse ReadCachedArticle(string segmentId, ArticleCacheDb.CacheEntry entry)
     {
-        var cachePath = GetCachePath(hash);
-        var fileStream = new FileStream(cachePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-            bufferSize: 81920, useAsync: true);
-
+        var dataStream = _packManager.Read(entry.PackId, entry.Offset, entry.Length);
         return new UsenetDecodedArticleResponse
         {
             SegmentId = segmentId,
             ResponseCode = (int)UsenetResponseType.ArticleRetrievedHeadAndBodyFollow,
             ResponseMessage = "220 - Article retrieved from persistent cache",
-            ArticleHeaders = articleHeaders,
-            Stream = new CachedYencStream(yencHeaders, fileStream)
+            ArticleHeaders = entry.ArticleHeaders,
+            Stream = new CachedYencStream(entry.YencHeaders, dataStream)
         };
     }
 
-    private void TouchCacheFile(string hash)
+    private void TouchEntry(string hash)
+    {
+        _touchBuffer.TryAdd(hash, 0);
+    }
+
+    private void OnTimerTick()
+    {
+        FlushTouchBuffer();
+        CleanupLegacyShard();
+    }
+
+    private void FlushTouchBuffer()
     {
         try
         {
-            var cachePath = GetCachePath(hash);
-            File.SetLastAccessTimeUtc(cachePath, DateTime.UtcNow);
+            var hashes = _touchBuffer.Keys.ToList();
+            if (hashes.Count == 0) return;
+
+            foreach (var hash in hashes)
+                _touchBuffer.TryRemove(hash, out _);
+
+            _db.TouchBatch(hashes);
         }
-        catch
+        catch (Exception e)
         {
-            // Ignore — best-effort LRU tracking
+            Log.Warning(e, "Failed to flush touch buffer");
         }
     }
 
-    private string GetCachePath(string hash)
+    private void CleanupLegacyShard()
     {
-        var prefix = hash[..2];
-        return Path.Combine(_cacheDir, prefix, hash);
+        if (!_legacyMigrator.HasLegacyCache) return;
+        if (_legacyCleanupShardIndex < 0) return;
+
+        try
+        {
+            _legacyCleanupShardIndex = _legacyMigrator.CleanupStaleShard(_legacyCleanupShardIndex);
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "Error during legacy cache cleanup");
+            _legacyCleanupShardIndex = -1;
+        }
     }
 
     private static string GetHash(string segmentId)
@@ -418,11 +410,16 @@ public class PersistentArticleCacheNntpClient : WrappingNntpClient
 
     public override void Dispose()
     {
+        _touchFlushTimer.Dispose();
+        FlushTouchBuffer();
+
         foreach (var semaphore in _pendingRequests.Values)
             semaphore.Dispose();
 
         _pendingRequests.Clear();
         _cachedSegments.Clear();
+        _packManager.Dispose();
+        _db.Dispose();
         base.Dispose();
         GC.SuppressFinalize(this);
     }

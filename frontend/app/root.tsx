@@ -2,7 +2,6 @@ import {
   Links,
   Meta,
   Outlet,
-  redirect,
   Scripts,
   ScrollRestoration,
   useLocation,
@@ -12,7 +11,7 @@ import {
 import 'bootstrap/dist/css/bootstrap.min.css';
 import "./app.css";
 import type { Route } from "./+types/root";
-import { IS_FRONTEND_AUTH_DISABLED, isAuthenticated } from "~/auth/authentication.server";
+import { IS_FRONTEND_AUTH_DISABLED } from "~/auth/authentication.server";
 import { backendClient } from "~/clients/backend-client.server";
 import { TopNavigation } from "./routes/_index/components/top-navigation/top-navigation";
 import { LeftNavigation } from "./routes/_index/components/left-navigation/left-navigation";
@@ -20,13 +19,10 @@ import { PageLayout } from "./routes/_index/components/page-layout/page-layout";
 import { Loading } from "./routes/_index/components/loading/loading";
 
 export async function loader({ request }: Route.LoaderArgs) {
-  // unauthenticated routes
   let path = new URL(request.url).pathname;
   if (path === "/login") return { useLayout: false };
   if (path === "/onboarding") return { useLayout: false };
 
-  // ensure all other routes are authenticated
-  if (!await isAuthenticated(request)) return redirect("/login");
   const configItems = await backendClient.getConfig(["webdav.active-stream-tracker"]);
   const isActiveStreamTrackerEnabled = configItems.find(i => i.configName === "webdav.active-stream-tracker")?.configValue !== "false";
   return {

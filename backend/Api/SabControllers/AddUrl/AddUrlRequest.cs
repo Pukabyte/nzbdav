@@ -13,18 +13,18 @@ public class AddUrlRequest() : AddFileRequest
 
     public static async Task<AddUrlRequest> New(HttpContext context, ConfigManager configManager)
     {
-        var nzbUrl = context.GetQueryParam("name");
-        var nzbName = context.GetQueryParam("nzbname");
+        var nzbUrl = context.GetRequestParam("name");
+        var nzbName = context.GetRequestParam("nzbname");
         var userAgent = configManager.GetUserAgent();
         var nzbFile = await GetNzbFile(nzbUrl, nzbName, userAgent).ConfigureAwait(false);
         return new AddUrlRequest()
         {
             FileName = nzbFile.FileName,
-            MimeType = nzbFile.ContentType,
+            ContentType = nzbFile.ContentType,
             NzbFileStream = nzbFile.FileStream,
-            Category = context.GetQueryParam("cat") ?? configManager.GetManualUploadCategory(),
-            Priority = MapPriorityOption(context.GetQueryParam("priority")),
-            PostProcessing = MapPostProcessingOption(context.GetQueryParam("pp")),
+            Category = context.GetRequestParam("cat") ?? configManager.GetManualUploadCategory(),
+            Priority = MapPriorityOption(context.GetRequestParam("priority")),
+            PostProcessing = MapPostProcessingOption(context.GetRequestParam("pp")),
             CancellationToken = context.RequestAborted
         };
     }

@@ -62,9 +62,4 @@ public class DatabaseStoreIdsCollection(
             .Select(x => x as IStoreItem)
             .ToArray();
     }
-
-    protected override bool SupportsFastMove(SupportsFastMoveRequest request)
-    {
-        return false;
-    }
 }

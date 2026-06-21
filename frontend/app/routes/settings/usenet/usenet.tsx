@@ -151,6 +151,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                             <div key={index} className={styles["provider-card"]}>
                                 <div className={styles["provider-card-inner"]}>
                                     <div className={styles["provider-header"]}>
+                                        <div className={styles["provider-order"]}>{index + 1}</div>
                                         <div className={styles["provider-header-content"]}>
                                             <div className={styles["provider-host"]}>
                                                 {provider.Host}
